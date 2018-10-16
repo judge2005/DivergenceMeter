@@ -11,7 +11,7 @@
 ;                                                                     *
 ;	Filename:		DivergenceMeter.asm                               *
 ;	Date:			5-12-2012										  *
-;	File Version:	1.05	(REMEMBER to update number in code!)	  *
+;	File Version:	1.06	(REMEMBER to update number in code!)	  *
 ;                                                                     *
 ;	Author:			Tom Titor                                         *
 ;	Company:	    /a/                                               *
@@ -67,11 +67,14 @@
 ;			will be displayed as long as switch 2 is held on the way  *
 ;			into the Settings menu.									  *
 ;		1.05 (5/12) Works for either DS1307 or DS3232 clock chips.	  *
+;		1.06 (10/14/18) MPA mods
 ;																	  *
 ;**********************************************************************
 
 	list      p=16f628A           ; list directive to define processor
-	#include  "C:\Program Files\Microchip\MPASM Suite\P16F628A.INC"       ; processor specific variable definitions
+
+	#include "C:\Program Files (x86)\Microchip\MPLABX\v5.00\mpasmx\p16f628a.inc"
+;	#include  "C:\Program Files\Microchip\MPASM Suite\P16F628A.INC"       ; processor specific variable definitions
 
 	errorlevel  -302              ; suppress message 302 from list file
 
@@ -137,7 +140,13 @@ blankStart	equ		4A			; Register to hold starting hour of tube blanking
 blankEnd	equ		4B			; Register to hold ending hour of tube blanking
 hourCount	equ		4C			; Register to count down hours until time adjustment
 oldHour		equ		4D			; Register to track start of hour
-
+		
+useTimeout	equ		4E
+timeoutL	equ		4F			; LSB of counter to timeout button reads
+timeoutH	equ		50			; MSB of counter to timeout button reads
+		
+; ----
+; Constants
 LED			equ		0			; LED is bit 0 in PORTB
 HVE			equ		1			; High Voltage Enable is bit 1 in PORTB
 CLK			equ		2			; Clock line for serial-to-parallel drivers is bit 2 in PORTB
@@ -349,6 +358,24 @@ FillT1T0	movfw	Data_Buf	; (for calls that jump in here, bring Data_Buf into W)
 			return
 
 ;-------
+; ===> Add a version that times out, call it from world line display loops.	
+ButtonsTime	movlw	d'128'		; Wait at most 8s (approx)
+			movwf	timeoutL
+			movlw	d'2'		; Wait at most 8s (approx)
+			movwf	timeoutH
+BTLoop		movlw	b'11110000'	; Clear the Button flag return bits (bits 0-3)
+			andwf	Flag,f		;
+			call	deBounce	; Call deBounce to give the tubes some properly dimmed display time
+			btfsc	PORTA,SW1	; Button 1 pressed?
+			goto	length		;    ...yes, go see if it's long or short
+			btfsc	PORTA,SW2	; Button 2 pressed?
+			goto	any2press	;    ...yes, go handle button 2 press
+			decfsz	timeoutL,1	; Done counting?
+			goto	BTLoop		; Neither button pressed. Wait more.
+			decfsz	timeoutH,1	; Done counting?
+			goto	BTLoop		; Neither button pressed. Wait more.
+			bsf		Flag,short1	; Simulate button 1 press
+			return			
 
 Buttons		movlw	b'11110000'	; Clear the Button flag return bits (bits 0-3)
 			andwf	Flag,f		;
@@ -624,7 +651,16 @@ Crash666	goto	Crash666	; Infinite loop crash.
 			return				; returns to INITIAL calling routine
 
 ;------
-
+; ===> animates to a random number by using random run lengths
+NewFun		movlw	d'10'		; Set T6 to a comma
+			movwf	T6
+			clrf	T5			; Set colon tube to 0
+			clrf	T2			; Set other colon tube to 0
+			clrf	LeftDP		; Clear all left decimal places
+			clrf	RightDP		; Clear all right decimal places
+			bsf		RightDP,6	; Set right decimal point on for Tube 6
+			movlw	d'3'		; Set brightness value
+			movwf	bright		;
 Fun			clrf	T7			; Zero out the leftmost tube for most random world lines
 			bcf		Eflag,beta	; Clear the beta world line flag.
 			bcf		Eflag,negWL	; Clear negative world line flag.
@@ -641,7 +677,7 @@ Fun			clrf	T7			; Zero out the leftmost tube for most random world lines
 			btfsc	STATUS,Z	; See if W is now zero (16 out of 256 chance it is)
 			bsf		Eflag,beta	; Display a beta world line number (1.xxxxxx)
 								; (Of course, it was 0, we already flagged it as negative WL)
-			call	RandomNum	; Gets 0-255 in W
+InitRunLens	call	RandomNum	; Gets 0-255 in W
 			andlw	b'00000111'	; 0-7 in W
 			call	RunLength	; Gets runlength that's a multiple of 10 for tube 7
 			movwf	TR7			;    so leftmost tube will return to 0.
@@ -664,7 +700,7 @@ nextRL		call	RandomNum	; Gets 0-255 in W
 			return				;
 
 ;-------
-
+; ===> Animate to next world line. Is there just one number location?
 animate		bcf		Flag,Done	; Clear bit Done of Flag for tracking if animation is done.
 			movfw	TR7			; Load TR7 runlength into W
 			btfsc	STATUS,Z	;   and see if it's zero.
@@ -735,7 +771,7 @@ Pulse		movlw	d'7'		; Flash full brightness
 			return				; 
 
 ;------
-
+; ===> Animates TO the values in V0-V7 (see moveNumber)
 Fun2		movfw	TMR0		; Seed 0-255 randomly by switch release that got us here
 			movwf	random		; Store the random number.
 FillRuns	movlw	TR7			; ADDRESS of TR7
@@ -1059,45 +1095,24 @@ ClockON		movlw	0x02		; Hours register in clock RAM
 			goto	GetTime		; Start in clock mode.
 
 
-PreLoad		movlw	d'1'		; Load up Steins Gate worldline number
-			movwf	T7
-			movlw	d'10'
-			movwf	T6
-			movlw	d'0'
-			movwf	T5
-			movlw	d'4'
-			movwf	T4
-			movlw	d'8'
-			movwf	T3
-			movlw	d'5'
-			movwf	T2
-			movlw	d'9'
-			movwf	T1
-			movlw	d'6'
-			movwf	T0
-			clrf	LeftDP		; Clear all left decimal places
-			clrf	RightDP		; Clear all right decimal places
-			bsf		RightDP,6	; Set right decimal point on for Tube 6
-
-			bsf		ShadowB,NBL	; set NOT Blanking high (tubes no longer blanked) while I'm at it,
+PreLoad		bsf		ShadowB,NBL	; set NOT Blanking high (tubes no longer blanked) while I'm at it,
 			bsf		ShadowB,HVE	; and Set High Voltage Enable ON to display the tubes now, too.
 			movfw	ShadowB		; Copy ShadowB...
 			movwf	PORTB		; ...to PORTB 
-			call 	Loader		; Display the above numbers into the tubes.
+			call	NewFun
 
-
-MainLoop						; Main work loop here
+WLLoop							; Main work loop here for random world lines
 			movlw	d'3'		; Set brightness value
 			movwf	bright		;
 			bcf		Eflag,negWL	; This bit only gets set for negative world lines
-			call	Buttons		; Call routine that watches the buttons
+			call	ButtonsTime	; Call routine that watches the buttons with timeout
 			btfsc	Flag,short1	; If there was a short press of Button 1...
 			goto	funtime		;	...go to tube animation fun.
 			btfsc	Flag,long1	; If there was a long press of Button 1...
-			goto	WorldLines	;   ...go oto preset sequence of World Lines
-			goto	GetTime		; We get here is 2 was pressed. Go to Time display.
+			goto	WorldLines	;   ...go to preset sequence of World Lines
+			goto	GetTime		; We get here if 2 was pressed. Go to Time display.
 funtime		call	Fun			; Roll a random world line number with animation.
-			goto	MainLoop	;
+			goto	WLLoop		;
 
 
 
@@ -1119,14 +1134,20 @@ WorldLines	clrf	pointer		; Display world lines from anime and visual novel:
 			movwf	T1
 			movlw	d'7'
 			movwf	T0
+; ===> Does Loader perform animation? I don't think so.
 			call 	Loader		; Display the above numbers into the tubes.
+;			movlw	d'3'		; Set brightness value
+;			movwf	bright		;
+;			call	moveNumber
+;			call	Fun2
 								; We will get subsequent run lengths from EEPROM to reach next world lines
-loiter		call	Buttons		; Call routine that watches the buttons
+; ===> Put a timeout in Buttons. Probably wrap it with something - we don't want to mess up other callers`
+loiter		call	ButtonsTime	; Call routine that watches the buttons
 			btfsc	Flag,short1	; If there was a short press of Button 1...
 			goto	WLnext		;	...go to the next world line
 			btfsc	Flag,long1	; If there was a long press of Button 1...
-			goto	GetTime		;   ...go to Clock display
-			goto	OwnTime		; We get here is 2 was pressed. Go to Enter Your Own Number
+			goto	OwnTime		;   ...go to Enter Your Own Number
+			goto	GetTime		; We get here if 2 was pressed. Go to clock display
 
 WLnext		movlw	d'8'		; Going to get 8 tube runtimes from EEPROM
 			movwf	GenCount	; Use the general counter from the Clock I/O routines (it's free)
@@ -1153,7 +1174,8 @@ moreTRn		bsf		STATUS,RP0	; Bank 1
 			subwf	pointer,w	; If we are out of numbers, zero flag will be set by this subtraction
 			btfss	STATUS,Z	; Zero bit set?
 			goto	loiter		;    No. Go wait for buttons to activate next number.
-			goto	MainLoop
+			goto	ButtonsTime	; Wait for one last keypress or timeout
+			goto	GetTime
 
 
 
@@ -1197,7 +1219,7 @@ blinkie2	call	delay100	;
 			decfsz	GenCount,f	;
 			goto	blinkies	;
 			call	moveNumber	; Copy the user's number from T0-T7 to V0-V7
-waitin		call	Buttons		; Wait for any button
+waitin		call	ButtonsTime	; Wait for any button
 			btfsc	Flag,short1	; See if button 1 was pressed...
 			goto	spinOwn		;    and if it was, spin the user's world line number.
 			goto	GetTime		;    Otherwise, Finished with world line playing. Go Clock mode.
@@ -1225,14 +1247,14 @@ zipDigi		movlw	d'10'		; Tube was 0, so set to 10 (blank)
 			movwf	INDF		
 			goto	more		; go for more inc/dec
 
-
-
+;	
+RandomWL	call	NewFun		; Display a random world line
+			call	ButtonsTime	; Pressing any button, or waiting for a timeout will end it
+			
+; ===> Normally sits here. This doesn't call Buttons, it polls directly
 GetTime							; Time Display from DS1307 Clock Chip.
 			movfw	brightSet	; set brightness from brightSet value for clock display
 			movwf	bright		;
-wait123		btfsc	PORTA,SW2	; Wait for SW2 release
-			goto	wait123		;
-			call	deBounce	;
 			movlw	d'10'		; Make Tubes 2 and 5 display no digit
 			movwf	T2
 			movwf	T5
@@ -1281,6 +1303,7 @@ NewSec
 			btfsc	STATUS,Z	;   If it is 30, the subtraction will set the Zero flag
 			goto	_30sec
 			movfw	Data_Buf	; Get the full seconds value again.
+			incf	Mem_Loc,f	; Increment memory location in preparation to get minutes
 			sublw	b'01011001'	; See if it's 59 (that's BCD)
 			btfsc	STATUS,Z	;   If it is 59, the subtraction will set the Zero flag
 			goto	_00sec
@@ -1311,14 +1334,23 @@ nextTubeA	incf	INDF,f		; Increment the tube value
 			goto	nextSet		;    ...so if it's clear, go spin more
 			goto	GetDate		; Go display date.
 
-_00sec		call	FillBlanks
+_00sec		call	ReadDS1307	; Memory location has already been incremented
+			movfw	Data_Buf	; Get the full minutes value
+			sublw	b'00100100'	; See if it's 24 (that's BCD) - this will display random WL at HH:24:59
+			btfsc	STATUS,Z	;   If it is 30, the subtraction will set the Zero flag
+			goto	RandomWL	;	So go display a random world line
+			movfw	Data_Buf	; Get the full minutes value again
+			sublw	b'01000111'	; See if it's 47 (that's BCD) - this will display random WL at HH:47:59
+			btfsc	STATUS,Z	;   If it is 30, the subtraction will set the Zero flag
+			goto	RandomWL	;	So go display a random world line
+			call	FillBlanks	; Otherwise slide the display
 			bsf		Flag,Slide	
 			call	Loader
 			call	deBounce
 			goto	minutes		; WHY IS THIS HERE?
 
-minutes		incf	Mem_Loc,f	; Increment memory location to get minutes
-			call	ReadDS1307	;
+minutes		call	ReadDS1307	; Memory location has already been incremented
+			movfw	Data_Buf	; Get the full minutes value again
 			andlw	b'00001111'	; AND the W reg so only single digit of minutes (in BCD) remains
 			movwf	T3			; Put it into register for Tube 3
 			swapf	Data_Buf,w	; Get the minutes tens digit by swapping nybbles from Data_Buf...
@@ -1487,7 +1519,7 @@ Settings	call	FillBlanks	; Blank the tubes
 			movwf	T3
 			movlw	d'0'		; Tenths digit of ersion number.
 			movwf	T1
-			movlw	d'5'		; Hundredths digit of version number.
+			movlw	d'6'		; Hundredths digit of version number.
 			movwf	T0
 			call	Loader		; display version number
 Settings2	btfsc	PORTA,SW2	; Wait for release of SW2
