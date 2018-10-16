@@ -1175,7 +1175,7 @@ moreTRn		bsf		STATUS,RP0	; Bank 1
 			btfss	STATUS,Z	; Zero bit set?
 			goto	loiter		;    No. Go wait for buttons to activate next number.
 			goto	ButtonsTime	; Wait for one last keypress or timeout
-			goto	GetTime
+			goto	WLLoop		; Go back to random mode
 
 
 
