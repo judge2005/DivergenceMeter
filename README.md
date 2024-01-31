@@ -1,6 +1,6 @@
 # DivergenceMeter
 
-This is code for [Tom Titor's divergence meter](http://www.mindspring.com/~tomtitor/index.html).
+This is code for [Tom Titor's divergence meter](http://brotoro.com/dm/index.html).
 
 The main change is that the worldline displays will automatically move on to the next worldline after around 9 seconds, unless the user presses button 1 and moves it on manually. This allows you to put the clock into a 'worldline mode' and not have to keep pressing buttons to change the display. This is explained below.
 
